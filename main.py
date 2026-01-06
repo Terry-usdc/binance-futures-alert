@@ -1,3 +1,4 @@
+import os
 import re
 import json
 import requests
@@ -17,6 +18,10 @@ HEADERS = {
     "Referer": "https://www.binance.com/zh-TC/support/announcement/list/48",
     "clienttype": "web",
 }
+
+STATE_PATH = os.getenv("STATE_PATH", "state.json")
+os.environ["DISCORD_WEBHOOK_URL"] = "https://discordapp.com/api/webhooks/1458007697914859706/h1vFpSm2PkuPG1PMMa_7W20thdCIAynV6aygU5sJ1ut5mMElaAgeJ7r9GtB6GqjVhX8v"
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")  # GitHub Secrets 會注入
 
 def build_link(code: str, locale="zh-TC"):
     return f"https://www.binance.com/{locale}/support/announcement/detail/{quote(code)}" if code else None
@@ -45,6 +50,25 @@ def fetch_detail_data(s: requests.Session, code: str):
     r = s.get(DETAIL_API, params={"articleCode": code}, headers=HEADERS, timeout=15)
     r.raise_for_status()
     return r.json()["data"]
+
+# ---- state ----
+def load_state(path=STATE_PATH):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"seen": []}
+    except Exception:
+        return {"seen": []}
+
+def save_state(state, path=STATE_PATH):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+def make_key(code: str, pair: str, utc: str) -> str:
+    return f"{code}|{pair}|{utc}"
 
 # ---- 把 contentJson 的所有文字「按順序」吐成 lines ----
 def walk_text(obj, out):
@@ -88,7 +112,6 @@ def parse_pair_times_from_lines(lines, max_follow_lines=10):
         utc_str = f"{d} {t} UTC"
         tw_str = utc_to_taipei(d, t)
 
-        # 往後掃幾行找幣對（避免 footer/related 誤配）
         for j in range(i + 1, min(len(lines), i + 1 + max_follow_lines)):
             pairs = [p.upper() for p in PAIR_RE.findall(lines[j])]
             if pairs:
@@ -96,51 +119,80 @@ def parse_pair_times_from_lines(lines, max_follow_lines=10):
                     results.append({"pair": pair, "utc": utc_str, "taipei": tw_str})
                 break
 
-    # 去重：同幣對同時間
     uniq = {}
     for r in results:
         uniq[(r["pair"], r["utc"])] = r
     return list(uniq.values())
 
-# ====== 主程式：抓「最近 5 篇」符合 Futures+Launch 的文章並解析 ======
-s = requests.Session()
-warmup_session(s)
+# ---- discord ----
+def send_discord(webhook_url: str, content: str):
+    if not webhook_url:
+        raise RuntimeError("DISCORD_WEBHOOK_URL 未設定（請在 GitHub Secrets 設定）")
+    r = requests.post(webhook_url, json={"content": content}, timeout=15)
+    r.raise_for_status()
 
-articles = fetch_catalog(s, 48, 1, 20)
+def format_message(title: str, link: str, new_rows: list[dict]) -> str:
+    lines = [f"📢 **{title}**", link]
+    for r in sorted(new_rows, key=lambda x: (x["utc"], x["pair"])):
+        lines.append(f"- **{r['pair']}** | {r['utc']} | {r['taipei']}")
+    return "\n".join(lines)
 
-matched = []
-for it in articles:
-    title = it.get("title", "") or ""
-    code = it.get("code")
-    if code and ("Futures" in title) and ("Launch" in title):
-        matched.append(it)
-    if len(matched) >= 3:
-        break
+def main():
+    state = load_state()
+    seen = set(state.get("seen", []))
 
-if not matched:
-    print("最新 20 篇內找不到符合 Futures+Launch 的公告")
-else:
-    for idx, it in enumerate(matched, 1):
+    s = requests.Session()
+    warmup_session(s)
+
+    articles = fetch_catalog(s, 48, 1, 20)
+
+    matched = []
+    for it in articles:
+        title = it.get("title", "") or ""
+        code = it.get("code")
+        if code and ("Futures" in title) and ("Launch" in title):
+            matched.append(it)
+        if len(matched) >= 3:
+            break
+
+    all_new_keys = []
+    push_payloads = []
+
+    for it in matched:
         title = it.get("title", "")
         code = it.get("code")
-        print("\n==============================")
-        print(f"[{idx}] 標題：", title)
-        print("連結：", build_link(code))
+        link = build_link(code)
 
-        try:
-            data = fetch_detail_data(s, code)
-            content_json = data.get("contentJson")
-            if not content_json:
-                print("❌ 這篇沒有 contentJson，略過")
-                continue
+        data = fetch_detail_data(s, code)
+        content_json = data.get("contentJson")
+        if not content_json:
+            continue
 
-            lines = extract_lines_from_content_json(content_json)
-            rows = parse_pair_times_from_lines(lines, max_follow_lines=10)
+        lines = extract_lines_from_content_json(content_json)
+        rows = parse_pair_times_from_lines(lines, max_follow_lines=10)
 
-            if not rows:
-                print("❌ 沒解析到『時間 -> 幣對』")
-            else:
-                for r in sorted(rows, key=lambda x: (x["utc"], x["pair"])):
-                    print(f"- {r['pair']} | {r['utc']} | {r['taipei']}")
-        except Exception as e:
-            print("❌ 解析失敗：", e)
+        new_rows = []
+        for r in rows:
+            k = make_key(code, r["pair"], r["utc"])
+            if k not in seen:
+                new_rows.append(r)
+                all_new_keys.append(k)
+
+        if new_rows:
+            push_payloads.append(format_message(title, link, new_rows))
+
+    if push_payloads:
+        content = "\n\n".join(push_payloads)
+        send_discord(DISCORD_WEBHOOK_URL, content)
+
+        for k in all_new_keys:
+            seen.add(k)
+        state["seen"] = sorted(seen)
+        save_state(state)
+
+        print(f"sent {len(all_new_keys)} new items")
+    else:
+        print("no updates")
+
+if __name__ == "__main__":
+    main()
