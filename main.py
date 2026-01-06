@@ -20,7 +20,7 @@ HEADERS = {
 }
 
 STATE_PATH = os.getenv("STATE_PATH", "state.json")
-os.environ["DISCORD_WEBHOOK_URL"] = "https://discordapp.com/api/webhooks/1458007697914859706/h1vFpSm2PkuPG1PMMa_7W20thdCIAynV6aygU5sJ1ut5mMElaAgeJ7r9GtB6GqjVhX8v"
+
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")  # GitHub Secrets 會注入
 
 def build_link(code: str, locale="zh-TC"):
