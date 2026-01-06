@@ -3,7 +3,7 @@ name: Binance Futures Alert
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "0 * * * *"
+    - cron: "*/30 * * * *"
 
 permissions:
   contents: write
