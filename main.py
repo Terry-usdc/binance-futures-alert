@@ -150,7 +150,7 @@ def main():
     for it in articles:
         title = it.get("title", "") or ""
         code = it.get("code")
-        if code and ("Futures" in title) #and ("Launch" in title):
+        if code and ("Futures" in title): #and ("Launch" in title):
             matched.append(it)
         if len(matched) >= 3:
             break
