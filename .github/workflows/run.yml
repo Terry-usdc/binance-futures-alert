@@ -3,7 +3,7 @@ name: Binance Futures Alert
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "0 * * * *"
+    - cron: "*/15 * * * *"
 
 permissions:
   contents: write
@@ -11,13 +11,10 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 70
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          persist-credentials: true
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -29,19 +26,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run script every 15 minutes (x4)
+      - name: Run script
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           STATE_PATH: state.json
         run: |
-          for i in {1..4}; do
-            echo "===== Run $i/4: $(date -u) (UTC) ====="
-            python main.py || echo "main.py failed (continuing)"
-            if [ "$i" -lt 4 ]; then
-              echo "Sleeping 900s..."
-              sleep 900
-            fi
-          done
+          python main.py
 
       - name: Commit updated state.json (if changed)
         run: |
@@ -50,4 +40,3 @@ jobs:
           git add state.json
           git commit -m "Update state.json" || echo "No changes"
           git push
-
