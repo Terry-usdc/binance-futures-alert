@@ -94,7 +94,7 @@ def extract_lines_from_content_json(content_json_str: str):
 
 # ---- 狀態機解析：時間行 -> 後面 USDT 行配對 ----
 TIME_LINE_RE = re.compile(r"^(20\d{2}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s*\(UTC\)\s*:?\s*$", re.IGNORECASE)
-PAIR_RE = re.compile(r"\b([A-Z0-9]{2,15}USDT)\b")
+PAIR_RE = re.compile(r"([^\s,，。；;:：()（）]{2,30}USDT)", re.IGNORECASE)
 
 def utc_to_taipei(date_str: str, time_str: str) -> str:
     dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
